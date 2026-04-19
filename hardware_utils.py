@@ -86,8 +86,14 @@ def encode_for_transmission(message: int,
     # Reshape to [n=2, 2] where each row is [I, Q]
     complex_symbols = symbols.reshape(n, 2)  # [[I1, Q1], [I2, Q2]]
     
-    # Repeat symbols for robustness (simple repetition code)
-    repeated = np.repeat(complex_symbols, repetitions, axis=0)
+    # Keep encoder amplitude exactly as produced by the trained model.
+    # Additional re-normalization here shifts symbols away from the
+    # distribution seen during training and hurts decode accuracy.
+    
+    # Repeat the full 2-symbol codeword sequence for robustness.
+    # Example for repetitions=3: [s1,s2,s1,s2,s1,s2]
+    # (not [s1,s1,s1,s2,s2,s2], which breaks decoder grouping).
+    repeated = np.tile(complex_symbols, (repetitions, 1))
     
     # Save to file (format: real,imag per line)
     with open(output_file, 'w') as f:
@@ -170,8 +176,7 @@ def decode_from_reception(input_file: str = RX_DATA_FILE,
         y = torch.tensor(flat_symbols, dtype=torch.float32, device=DEVICE).unsqueeze(0)  # [1, 4]
         
         # Decode
-        logits = model.decoder(y)  # Shape: [1, M=16]
-        probs = torch.softmax(logits, dim=1)
+        probs = model.decoder(y)  # Shape: [1, M=16], already softmax-normalized
         
         decoded_msg = torch.argmax(probs, dim=1).item()
         confidence = probs[0, decoded_msg].item()
