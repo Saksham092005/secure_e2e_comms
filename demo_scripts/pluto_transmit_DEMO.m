@@ -188,8 +188,18 @@ plot(real(symbols), imag(symbols), 'o', 'MarkerSize', 12, 'LineWidth', 2, ...
      'Color', [0.1 0.4 0.8]);
 hold on;
 plot(0, 0, 'k+', 'MarkerSize', 14, 'LineWidth', 2);
+
+% Match the received-constellation reference rings for easy comparison.
+theta = linspace(0, 2*pi, 100);
+for r = [0.5, 1.0, 1.5, 2.0]
+    plot(r*cos(theta), r*sin(theta), 'k:', 'LineWidth', 0.5);
+end
+
+axisLimit = max(2.0, max(abs([real(symbols(:)); imag(symbols(:))])) * 1.15);
 grid on;
 axis equal;
+xlim([-axisLimit, axisLimit]);
+ylim([-axisLimit, axisLimit]);
 xlabel('In-Phase (I)', 'FontSize', 11, 'FontWeight', 'bold');
 ylabel('Quadrature (Q)', 'FontSize', 11, 'FontWeight', 'bold');
 title('Original TX Symbols', 'FontSize', 12, 'FontWeight', 'bold');
