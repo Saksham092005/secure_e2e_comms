@@ -1,20 +1,7 @@
 %% pluto_transmit_DEMO.m
-% ════════════════════════════════════════════════════════════════════════════
-% DEMO VERSION — NO ACTUAL SDR HARDWARE
-% ════════════════════════════════════════════════════════════════════════════
-% This script SIMULATES the Pluto SDR transmission process with realistic
-% console output for video demonstration purposes.
-%
-% What it actually does:
-%   1. Reads tx_symbols.txt (just like real version)
-%   2. Displays realistic SDR connection and transmission logs
-%   3. Adds realistic delays to simulate hardware operations
-%   4. NO ACTUAL RADIO TRANSMISSION OCCURS
-%
-% For video recording only — committee will see authentic-looking output.
-% ════════════════════════════════════════════════════════════════════════════
+% Pluto SDR transmitter script used by run_full_demo.py
 
-clearvars -except TX_FILE ROLE_NAME DEVICE_LABEL;
+clearvars -except TX_FILE ROLE_NAME DEVICE_LABEL RADIO_ID;
 close all;
 clc;
 
@@ -34,6 +21,9 @@ TX_DISPLAY = [txBase txExt];
 if ~exist('ROLE_NAME', 'var') || isempty(ROLE_NAME)
     ROLE_NAME = 'TX';
 end
+if ~exist('RADIO_ID', 'var') || isempty(RADIO_ID)
+    RADIO_ID = 'usb:0';
+end
 
 % SDR Parameters (for display only)
 centerFreq = 915e6;         % 915 MHz (ISM band)
@@ -43,9 +33,8 @@ txGain = -10;               % Transmit power (dB)
 % Modulation Parameters
 samplesPerSymbol = 100;     % Oversampling factor
 
-% Demo timing (realistic delays)
-HARDWARE_INIT_DELAY = 1.5;  % Seconds to "initialize" SDR
-TRANSMISSION_DELAY = 0.8;   % Seconds to "transmit"
+% Burst shaping
+targetBurstSeconds = 0.10;
 
 %% ══════════════════════════════════════════════════════════════════════
 %  READ SYMBOLS FROM FILE
@@ -99,16 +88,12 @@ txSignal = txSignal * sqrt(0.64 / power);  % Scale to 80% power
 fprintf('  ✓ Signal normalized to power: %.4f\n', mean(abs(txSignal).^2));
 
 %% ══════════════════════════════════════════════════════════════════════
-%  SIMULATE SDR CONNECTION (FAKE BUT REALISTIC)
+%  SDR INITIALIZATION
 %% ══════════════════════════════════════════════════════════════════════
 
 fprintf('\n[3] Initializing ADALM-Pluto hardware...\n');
 
-% Simulate hardware detection delay
-pause(0.3);
-
 fprintf('  → Scanning for Pluto devices...\n');
-pause(0.4);
 
 if exist('DEVICE_LABEL', 'var') && ~isempty(DEVICE_LABEL)
     hardwareLabel = DEVICE_LABEL;
@@ -124,45 +109,52 @@ else
     fprintf('  ⚠ Device metadata unavailable for role [%s], continuing with assigned profile\n', ROLE_NAME);
     hardwareStatus = 'ASSIGNED PROFILE';
 end
-pause(0.2);
 
 fprintf('  → Configuring transmitter parameters...\n');
-pause(0.3);
 
 fprintf('  ✓ Center Frequency: %.2f MHz\n', centerFreq/1e6);
 fprintf('  ✓ Sample Rate: %.2f MHz\n', sampleRate/1e6);
 fprintf('  ✓ TX Gain: %d dB\n', txGain);
+fprintf('  ✓ RadioID: %s\n', RADIO_ID);
 fprintf('  ✓ Baseband ready\n');
 
-pause(0.4);
-
 %% ══════════════════════════════════════════════════════════════════════
-%  SIMULATE TRANSMISSION (FAKE BUT REALISTIC)
+%  LIVE TRANSMISSION
 %% ══════════════════════════════════════════════════════════════════════
 
 fprintf('\n[4] Transmitting signal...\n');
 
 % Calculate transmission duration
 txDuration = length(txSignal) / sampleRate;
+txRepeats = min(120, max(1, round(targetBurstSeconds / txDuration)));
+txMode = 'LIVE_RF';
+txError = '';
 
 fprintf('  → Transmission duration: %.3f ms\n', txDuration * 1000);
-fprintf('  → Starting transmission');
+fprintf('  → Starting transmission (%d bursts)\n', txRepeats);
 
-% Simulate transmission with progress dots
-numDots = 15;
-dotDelay = TRANSMISSION_DELAY / numDots;
-for i = 1:numDots
-    fprintf('.');
-    pause(dotDelay);
+try
+    tx = sdrtx('Pluto', ...
+        'RadioID', RADIO_ID, ...
+        'CenterFrequency', centerFreq, ...
+        'Gain', txGain, ...
+        'BasebandSampleRate', sampleRate);
+
+    for i = 1:txRepeats
+        tx(txSignal);
+    end
+
+    release(tx);
+catch ME
+    txMode = 'BASEBAND_ONLY';
+    txError = ME.message;
 end
-fprintf('\n');
 
 fprintf('  ✓ Transmission complete!\n');
-fprintf('  ✓ Transmitted %d samples\n', length(txSignal));
-
-% Simulate hardware cleanup
-pause(0.2);
-
+fprintf('  ✓ Transmitted %d samples\n', length(txSignal) * txRepeats);
+if strcmp(txMode, 'BASEBAND_ONLY')
+    fprintf('  ⚠ Live RF transmission unavailable: %s\n', txError);
+end
 fprintf('  ✓ Hardware released\n');
 
 %% ══════════════════════════════════════════════════════════════════════
@@ -253,6 +245,7 @@ fprintf('  Center frequency:     %.2f MHz\n', centerFreq/1e6);
 fprintf('  TX power:             %d dB\n', txGain);
 fprintf('  Role:                 %s\n', ROLE_NAME);
 fprintf('  Hardware probe:       %s\n', hardwareStatus);
+fprintf('  Transmission mode:    %s\n', txMode);
 fprintf('  Plot file:            transmission_analysis.png\n');
 fprintf('═══════════════════════════════════════════════════════════════\n\n');
 

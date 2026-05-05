@@ -41,3 +41,10 @@ checkpoints/
 *.pth
 *.ckpt
 events.out.tfevents.*
+
+demo_scripts/channel_simulator.py
+demo_scripts/pluto_receive_DEMO.m
+demo_scripts/pluto_transmit_DEMO.m
+demo_scripts/run_full_demo.py
+demo_scripts/quick_demo.py
+

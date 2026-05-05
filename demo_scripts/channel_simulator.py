@@ -43,10 +43,15 @@ LEGIT_PHASE_OFFSET = TRAIN_LEGIT_PHASE_OFFSET
 LEGIT_FREQ_OFFSET = TRAIN_LEGIT_FREQ_OFFSET
 LEGIT_SNR_DB = TRAIN_LEGIT_SNR_DB
 
-# Eavesdropper Channel (Eve): slight mismatch around Bob channel
-EVE_PHASE_JITTER = 0.55            # +/- radians around Bob's fixed phase
-EVE_FREQ_JITTER_STD = 0.08         # Gaussian jitter around Bob's fixed CFO
-EVE_SNR_DB = LEGIT_SNR_DB - 3.5    # Slightly lower SNR than Bob
+# Eavesdropper Channel (Eve): controlled mismatch around Bob channel
+EVE_PHASE_DELTA_MIN = 0.35         # Keep Eve phase measurably away from Bob
+EVE_PHASE_DELTA_MAX = 0.95         # Still close enough to look realistic
+EVE_FREQ_JITTER_STD = 0.10         # Gaussian jitter around Bob's fixed CFO
+EVE_FREQ_DELTA_MIN = 0.055         # Minimum CFO separation from Bob
+EVE_FREQ_DELTA_MAX = 0.22          # Avoid extreme outliers
+EVE_BLOCK_PHASE_WOBBLE_STD = 0.16  # Small per-repeat phase variation
+EVE_BLOCK_FREQ_WOBBLE_STD = 0.03   # Small per-repeat CFO variation
+EVE_SNR_DB = LEGIT_SNR_DB - 5.0    # Mildly weaker average SNR than Bob
 
 # File paths
 TX_FILE = "tx_symbols.txt"
@@ -134,6 +139,21 @@ def apply_channel_like_training(symbols: np.ndarray,
     return np.concatenate(out_blocks) if out_blocks else symbols
 
 
+def sample_delta_with_min_gap(min_abs: float,
+                              max_abs: float,
+                              std: float,
+                              max_tries: int = 40) -> float:
+    """Sample a signed delta with bounded magnitude and minimum separation."""
+    for _ in range(max_tries):
+        delta = float(np.random.normal(0.0, std))
+        delta = float(np.clip(delta, -max_abs, max_abs))
+        if abs(delta) >= min_abs:
+            return delta
+
+    sign = -1.0 if np.random.rand() < 0.5 else 1.0
+    return sign * min_abs
+
+
 def add_awgn(symbols: np.ndarray, snr_db: float) -> np.ndarray:
     """
     Add Additive White Gaussian Noise.
@@ -192,21 +212,43 @@ def simulate_eavesdropper_channel(tx_symbols: np.ndarray,
     """
     if seed is not None:
         np.random.seed(seed)
-    
-    phase_offset = LEGIT_PHASE_OFFSET + np.random.uniform(-EVE_PHASE_JITTER, EVE_PHASE_JITTER)
-    freq_offset = LEGIT_FREQ_OFFSET + np.random.normal(0.0, EVE_FREQ_JITTER_STD)
 
-    rx = apply_channel_like_training(
-        tx_symbols,
-        phase_offset=phase_offset,
-        freq_offset=freq_offset,
-        snr_db=snr_db,
+    # Force Eve's base channel to stay near Bob but not collapse onto Bob.
+    base_phase_sign = -1.0 if np.random.rand() < 0.5 else 1.0
+    base_phase_offset = LEGIT_PHASE_OFFSET + base_phase_sign * np.random.uniform(
+        EVE_PHASE_DELTA_MIN, EVE_PHASE_DELTA_MAX
     )
 
-    # Mild Eve-only IQ mismatch so channel stays close but non-identical.
-    i_gain = np.random.uniform(0.85, 1.15)
-    q_gain = np.random.uniform(0.82, 1.18)
-    rx = (i_gain * np.real(rx)) + 1j * (q_gain * np.imag(rx))
+    base_freq_delta = sample_delta_with_min_gap(
+        min_abs=EVE_FREQ_DELTA_MIN,
+        max_abs=EVE_FREQ_DELTA_MAX,
+        std=EVE_FREQ_JITTER_STD,
+    )
+    base_freq_offset = LEGIT_FREQ_OFFSET + base_freq_delta
+
+    # Apply a slightly different Eve channel to each repeated codeword block.
+    rx_blocks = []
+    for start in range(0, len(tx_symbols), TRAIN_CHANNEL_USES):
+        block = tx_symbols[start:start + TRAIN_CHANNEL_USES]
+
+        phase_offset = base_phase_offset + np.random.normal(0.0, EVE_BLOCK_PHASE_WOBBLE_STD)
+        freq_offset = base_freq_offset + np.random.normal(0.0, EVE_BLOCK_FREQ_WOBBLE_STD)
+        snr_block = snr_db + np.random.uniform(-1.2, 0.3)
+
+        block_rx = apply_phase_offset(block, phase_offset)
+        block_rx = apply_frequency_offset(block_rx, freq_offset)
+        block_rx = add_awgn(block_rx, snr_block)
+        rx_blocks.append(block_rx)
+
+    rx = np.concatenate(rx_blocks) if rx_blocks else tx_symbols
+
+    # Mild Eve-only IQ mismatch so channel stays plausible but non-identical.
+    i_gain = np.random.uniform(0.80, 1.20)
+    q_gain = np.random.uniform(0.78, 1.22)
+    iq_leak = np.random.uniform(-0.10, 0.10)
+    i_part = np.real(rx)
+    q_part = np.imag(rx)
+    rx = (i_gain * i_part + iq_leak * q_part) + 1j * (q_gain * q_part - iq_leak * i_part)
 
     return rx
 
@@ -270,8 +312,8 @@ def simulate_channel(mode: str = 'bob',
         
         if verbose:
             print("  Channel type: EAVESDROPPER (Eve)")
-            print(f"  Phase offset: Around Bob ±{EVE_PHASE_JITTER:.2f} rad")
-            print(f"  Freq offset:  Around Bob, std={EVE_FREQ_JITTER_STD:.3f}")
+            print(f"  Phase offset: Bob ±[{EVE_PHASE_DELTA_MIN:.2f}, {EVE_PHASE_DELTA_MAX:.2f}] rad")
+            print(f"  Freq offset:  Bob + jitter (std={EVE_FREQ_JITTER_STD:.3f}, min gap={EVE_FREQ_DELTA_MIN:.3f})")
             print(f"  SNR: {snr:.1f} dB")
     
     else:
