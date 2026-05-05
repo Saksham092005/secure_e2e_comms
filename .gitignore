@@ -34,7 +34,7 @@ build/
 Thumbs.db
 
 # Generated experiment artifacts
-results/
+# results/
 runs/
 checkpoints/
 *.pt
